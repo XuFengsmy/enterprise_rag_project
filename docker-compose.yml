@@ -1,0 +1,57 @@
+services:
+  api:
+    build: .
+    container_name: enterprise_rag_api
+    ports:
+      - "8000:8000"
+    volumes:
+      # 将宿主机的 data 目录挂载到容器内，确保 ChromaDB 和原始文档持久化不丢失
+      - ./data:/app/data
+      - hf_model_cache:/root/.cache/huggingface
+    environment:
+      # 覆盖 config.py 中的默认配置，指向容器网络内的服务名
+      - REDIS_URL=redis://enterprise_rag_redis:6379
+      - ES_URL=http://enterprise_rag_es:9200
+      - HF_ENDPOINT=https://hf-mirror.com
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_started
+      elasticsearch:
+        condition: service_healthy
+    restart: always
+
+  redis:
+    image: redis:alpine
+    container_name: enterprise_rag_redis
+    ports:
+      - "6379:6379"
+    restart: always
+
+  elasticsearch:
+    image: elasticsearch:8.11.1  # 推荐使用 8.x 版本
+    container_name: enterprise_rag_es
+    environment:
+      - discovery.type=single-node     # 开发/测试模式单节点运行
+      - xpack.security.enabled=false   # 关闭默认的安全验证，简化内网调用
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m" # 限制 ES 内存占用，防止撑爆服务器
+      - HF_API_TOKEN=${HF_API_TOKEN}
+      - HUGGINGFACEHUB_API_TOKEN=${HF_API_TOKEN}
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "9200:9200"
+    volumes:
+      # 独立挂载 ES 数据卷
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -s http://localhost:9200 >/dev/null || exit 1" ]
+      interval: 10s    # 每 10 秒检查一次
+      timeout: 10s     # 超时时间
+      retries: 10      # 最多重试 10 次
+      start_period: 20s # 前 20 秒不计入失败
+    restart: always
+
+volumes:
+  es_data:
+  hf_model_cache:
